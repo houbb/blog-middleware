@@ -1,0 +1,4 @@
+User-agent:*
+Disallow:
+
+Sitemap: https://houbb.github.io/lmxxf-thinking/sitemap.xml
