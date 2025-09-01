@@ -1,6 +1,6 @@
 {
-  "name": "lmxxf-thinking",
-  "description": "vue press for lmxxf-thinking",
+  "name": "blog-middleware",
+  "description": "vue press for blog-middleware",
   "version": "2.0.0",
   "license": "MIT",
   "type": "module",

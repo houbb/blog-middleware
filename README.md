@@ -1,10 +1,10 @@
 # 简介
 
-个人思考笔记
+中间件技术博客
 
 # 在线
 
-[https://houbb.github.io/lmxxf-thinking/](https://houbb.github.io/lmxxf-thinking/)
+[https://houbb.github.io/blog-middleware/](https://houbb.github.io/blog-middleware/)
 
 # 本地
 
@@ -28,23 +28,23 @@ npm run docs:clean-dev
 
 ## 知识花园（知识库、沉淀、有效输出）
 
-github: [https://github.com/houbb/lmxxf-thinking](https://github.com/houbb/lmxxf-thinking)
+github: [https://github.com/houbb/blog-middleware](https://github.com/houbb/blog-middleware)
 
-github-pags: [https://houbb.github.io/lmxxf-thinking/](https://houbb.github.io/lmxxf-thinking/posts/digit-garden/)
+github-pags: [https://houbb.github.io/blog-middleware/](https://houbb.github.io/blog-middleware/posts/digit-garden/)
 
 gitbook: [https://houbb.gitbook.io/digit-garden/](https://houbb.gitbook.io/digit-garden/)
 
 ## 学习方法论（学习技巧-深度加工）
 
-github: [https://github.com/houbb/lmxxf-thinking](https://github.com/houbb/lmxxf-thinking)
+github: [https://github.com/houbb/blog-middleware](https://github.com/houbb/blog-middleware)
 
-github-pags: [https://houbb.github.io/lmxxf-thinking/](https://houbb.github.io/lmxxf-thinking/posts/learnmethods/)
+github-pags: [https://houbb.github.io/blog-middleware/](https://houbb.github.io/blog-middleware/posts/learnmethods/)
 
 ## 思维模型（底层模型-深度加工）
 
-github: [https://github.com/houbb/lmxxf-thinking](https://github.com/houbb/lmxxf-thinking)
+github: [https://github.com/houbb/blog-middleware](https://github.com/houbb/blog-middleware)
 
-github-pags: [https://houbb.github.io/lmxxf-thinking/](https://houbb.github.io/lmxxf-thinking/posts/thinkmodel/)
+github-pags: [https://houbb.github.io/blog-middleware/](https://houbb.github.io/blog-middleware/posts/thinkmodel/)
 
 ## 刻意练习(力扣算法)
 
@@ -58,7 +58,7 @@ github-pags: [https://houbb.github.io/lmxxf-thinking/](https://houbb.github.io/l
 
 [个人技术笔记](https://github/houbb/houbb.github.io)
 
-[个人思考(不止技术) lmxxf-thinking](https://github/houbb/lmxxf-thinking)
+[个人思考(不止技术) blog-middleware](https://github/houbb/blog-middleware)
 
 ## 整体关系
 

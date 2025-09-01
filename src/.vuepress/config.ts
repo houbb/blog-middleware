@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export default defineUserConfig({
-  base: "/lmxxf-thinking/",
+  base: "/blog-middleware/",
 
   bundler: viteBundler({
     viteOptions: {
