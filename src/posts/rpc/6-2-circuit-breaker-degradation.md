@@ -6,333 +6,379 @@ tags: [rpc]
 published: true
 ---
 
-在分布式系统中，服务之间的依赖关系错综复杂，一个服务的故障可能会引发连锁反应，导致整个系统崩溃。熔断器模式和降级机制是应对这种问题的有效手段，它们能够防止故障扩散，提高系统的稳定性和可用性。本章将深入探讨熔断与降级的原理、实现以及在主流框架中的应用。
+在分布式系统中，服务之间的依赖关系错综复杂，一个服务的故障可能会导致整个系统的级联失败。熔断器模式和降级机制是应对这类问题的重要手段，它们能够防止故障扩散，提高系统的稳定性和可用性。本章将深入探讨熔断与降级的原理、实现以及在主流框架中的应用。
 
 ## 熔断器模式原理
 
 ### 什么是熔断器模式？
 
-熔断器模式（Circuit Breaker Pattern）源于物理学中的电路保护装置。在软件系统中，熔断器用于监控服务调用的状态，当失败率达到一定阈值时，熔断器会"跳闸"，阻止后续请求继续发送到故障服务，从而避免系统资源的浪费和故障的扩散。
+熔断器模式（Circuit Breaker Pattern）源自电子工程中的熔断器概念。当电流过载时，熔断器会自动熔断以保护电路。在软件系统中，熔断器用于检测服务调用的失败情况，当失败次数达到阈值时，熔断器会"熔断"，阻止后续请求发送到故障服务，从而保护系统免受级联故障的影响。
 
-### 熔断器的三种状态
+### 熔断器状态
 
 熔断器通常有三种状态：
 
-1. **关闭状态（Closed）**：正常状态下，允许请求通过
-2. **打开状态（Open）**：当失败率达到阈值时，熔断器打开，拒绝所有请求
-3. **半开状态（Half-Open）**：经过一段时间后，允许少量请求通过以测试服务是否恢复
+1. **关闭状态（Closed）**：正常状态下，请求可以正常发送到目标服务
+2. **打开状态（Open）**：当失败次数达到阈值时，熔断器打开，拒绝所有请求
+3. **半开状态（Half-Open）**：在一段时间后，熔断器进入半开状态，允许少量请求通过以测试服务是否恢复
+
+### 熔断器实现
 
 ```java
-public enum CircuitBreakerState {
-    CLOSED,   // 关闭状态
-    OPEN,     // 打开状态
-    HALF_OPEN // 半开状态
-}
-```
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
-### 熔断器核心组件
-
-一个完整的熔断器实现需要包含以下核心组件：
-
-```java
 public class CircuitBreaker {
-    private final String name;
-    private volatile CircuitBreakerState state = CircuitBreakerState.CLOSED;
-    private final int failureThreshold;      // 失败阈值
-    private final long timeout;              // 熔断超时时间
-    private final int requestVolumeThreshold; // 请求量阈值
-    private int failureCount = 0;            // 失败计数
-    private int successCount = 0;            // 成功计数
-    private long lastFailureTime = 0;        // 最后一次失败时间
-    
-    public CircuitBreaker(String name, int failureThreshold, long timeout, int requestVolumeThreshold) {
-        this.name = name;
-        this.failureThreshold = failureThreshold;
-        this.timeout = timeout;
-        this.requestVolumeThreshold = requestVolumeThreshold;
+    // 熔断器状态枚举
+    public enum State {
+        CLOSED, OPEN, HALF_OPEN
     }
     
-    public boolean canPass() {
+    // 配置参数
+    private final int failureThreshold;        // 失败阈值
+    private final long timeout;               // 熔断超时时间（毫秒）
+    private final int halfOpenAttempts;       // 半开状态下的尝试次数
+    
+    // 状态变量
+    private volatile State state = State.CLOSED;
+    private final AtomicInteger failureCount = new AtomicInteger(0);
+    private final AtomicInteger successCount = new AtomicInteger(0);
+    private final AtomicLong lastFailureTime = new AtomicLong(0);
+    
+    public CircuitBreaker(int failureThreshold, long timeout, int halfOpenAttempts) {
+        this.failureThreshold = failureThreshold;
+        this.timeout = timeout;
+        this.halfOpenAttempts = halfOpenAttempts;
+    }
+    
+    // 检查是否允许请求通过
+    public boolean canExecute() {
         switch (state) {
             case CLOSED:
                 return true;
             case OPEN:
-                // 检查是否可以进入半开状态
-                if (System.currentTimeMillis() - lastFailureTime > timeout) {
-                    state = CircuitBreakerState.HALF_OPEN;
-                    successCount = 0;
+                // 检查是否应该进入半开状态
+                if (System.currentTimeMillis() - lastFailureTime.get() > timeout) {
+                    state = State.HALF_OPEN;
+                    successCount.set(0);
                     return true;
                 }
                 return false;
             case HALF_OPEN:
-                // 半开状态下允许部分请求通过
-                return true;
+                // 允许有限次数的请求通过
+                return successCount.get() < halfOpenAttempts;
             default:
                 return true;
         }
     }
     
+    // 记录成功调用
     public void recordSuccess() {
         switch (state) {
             case CLOSED:
-                failureCount = 0; // 重置失败计数
+                failureCount.set(0); // 重置失败计数
                 break;
             case OPEN:
-                // OPEN状态下不应该有成功记录
+                // OPEN状态下不应该有成功调用
                 break;
             case HALF_OPEN:
-                successCount++;
-                // 如果成功次数达到阈值，恢复到关闭状态
-                if (successCount >= requestVolumeThreshold) {
-                    state = CircuitBreakerState.CLOSED;
-                    failureCount = 0;
+                successCount.incrementAndGet();
+                // 如果成功次数达到阈值，恢复到CLOSED状态
+                if (successCount.get() >= halfOpenAttempts) {
+                    state = State.CLOSED;
+                    failureCount.set(0);
                 }
                 break;
         }
     }
     
+    // 记录失败调用
     public void recordFailure() {
         switch (state) {
             case CLOSED:
-                failureCount++;
-                lastFailureTime = System.currentTimeMillis();
-                // 如果失败次数达到阈值，进入打开状态
-                if (failureCount >= failureThreshold) {
-                    state = CircuitBreakerState.OPEN;
+                int failures = failureCount.incrementAndGet();
+                if (failures >= failureThreshold) {
+                    state = State.OPEN;
+                    lastFailureTime.set(System.currentTimeMillis());
                 }
                 break;
             case OPEN:
                 // OPEN状态下更新最后失败时间
-                lastFailureTime = System.currentTimeMillis();
+                lastFailureTime.set(System.currentTimeMillis());
                 break;
             case HALF_OPEN:
-                // 半开状态下失败，重新进入打开状态
-                state = CircuitBreakerState.OPEN;
-                lastFailureTime = System.currentTimeMillis();
+                // 半开状态下任何失败都会重新打开熔断器
+                state = State.OPEN;
+                lastFailureTime.set(System.currentTimeMillis());
                 break;
         }
     }
     
-    public CircuitBreakerState getState() {
+    // 获取当前状态
+    public State getState() {
         return state;
     }
+    
+    // 强制打开熔断器
+    public void forceOpen() {
+        state = State.OPEN;
+        lastFailureTime.set(System.currentTimeMillis());
+    }
+    
+    // 强制关闭熔断器
+    public void forceClosed() {
+        state = State.CLOSED;
+        failureCount.set(0);
+    }
 }
 ```
 
-## 熔断器实现
-
-### 基础熔断器实现
+### 熔断器使用示例
 
 ```java
-public class SimpleCircuitBreaker {
+public class CircuitBreakerRpcClient {
     private final CircuitBreaker circuitBreaker;
-    private final long timeoutMs;
+    private final RpcClient rpcClient;
     
-    public SimpleCircuitBreaker(String name) {
-        this.circuitBreaker = new CircuitBreaker(name, 5, 60000, 3); // 5次失败后熔断，60秒恢复，3次成功后恢复
-        this.timeoutMs = 5000; // 5秒超时
+    public CircuitBreakerRpcClient(RpcClient rpcClient) {
+        this.rpcClient = rpcClient;
+        // 配置：5次失败后熔断，60秒后尝试恢复，半开状态下允许3次尝试
+        this.circuitBreaker = new CircuitBreaker(5, 60000, 3);
     }
     
-    public <T> T execute(Supplier<T> supplier) throws Exception {
-        if (!circuitBreaker.canPass()) {
-            throw new CircuitBreakerOpenException("Circuit breaker is open for " + circuitBreaker.name);
+    public RpcResponse sendRequest(RpcRequest request) throws RpcException {
+        // 检查熔断器状态
+        if (!circuitBreaker.canExecute()) {
+            throw new RpcException("Circuit breaker is open, service unavailable. Current state: " + 
+                                 circuitBreaker.getState());
         }
         
         try {
-            // 执行业务逻辑
-            T result = withTimeout(supplier, timeoutMs);
+            // 发送请求
+            RpcResponse response = rpcClient.sendRequest(request);
+            // 记录成功
             circuitBreaker.recordSuccess();
-            return result;
+            return response;
+        } catch (Exception e) {
+            // 记录失败
+            circuitBreaker.recordFailure();
+            throw new RpcException("Request failed", e);
+        }
+    }
+}
+```
+
+## 降级机制
+
+### 什么是服务降级？
+
+服务降级是指在系统面临压力或故障时，为了保证核心功能的正常运行，暂时舍弃一些非核心功能或提供简化的服务。降级机制可以帮助系统在资源有限的情况下维持基本的服务能力。
+
+### 降级策略
+
+#### 静默降级
+
+静默降级是指在服务不可用时，直接返回空结果或默认值，不向用户显示错误信息。
+
+```java
+public class SilentDegradationService {
+    private final CircuitBreaker circuitBreaker;
+    private final RpcClient rpcClient;
+    
+    public SilentDegradationService(RpcClient rpcClient) {
+        this.rpcClient = rpcClient;
+        this.circuitBreaker = new CircuitBreaker(5, 60000, 3);
+    }
+    
+    public User getUserProfile(String userId) {
+        if (!circuitBreaker.canExecute()) {
+            // 静默降级，返回默认用户信息
+            System.out.println("Service unavailable, returning default user profile");
+            return createDefaultUser(userId);
+        }
+        
+        try {
+            RpcRequest request = new RpcRequest("UserService", "getUserProfile", new Object[]{userId});
+            RpcResponse response = rpcClient.sendRequest(request);
+            circuitBreaker.recordSuccess();
+            return (User) response.getData();
         } catch (Exception e) {
             circuitBreaker.recordFailure();
-            throw e;
+            // 静默降级，记录日志但不抛出异常
+            System.err.println("Failed to get user profile, returning default: " + e.getMessage());
+            return createDefaultUser(userId);
         }
     }
     
-    private <T> T withTimeout(Supplier<T> supplier, long timeoutMs) throws Exception {
-        CompletableFuture<T> future = CompletableFuture.supplyAsync(supplier);
-        try {
-            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            future.cancel(true);
-            throw new TimeoutException("Execution timed out after " + timeoutMs + "ms");
-        } catch (ExecutionException e) {
-            if (e.getCause() instanceof Exception) {
-                throw (Exception) e.getCause();
-            }
-            throw e;
-        }
-    }
-}
-
-class CircuitBreakerOpenException extends Exception {
-    public CircuitBreakerOpenException(String message) {
-        super(message);
+    private User createDefaultUser(String userId) {
+        User user = new User();
+        user.setId(userId);
+        user.setName("Default User");
+        user.setEmail("default@example.com");
+        return user;
     }
 }
 ```
 
-### 带统计信息的熔断器
+#### 降级页面
+
+对于Web应用，可以提供降级页面来告知用户当前服务状态。
 
 ```java
-public class AdvancedCircuitBreaker {
+public class DegradePageService {
     private final CircuitBreaker circuitBreaker;
-    private final MetricsCollector metricsCollector;
-    private final long timeoutMs;
+    private final RpcClient rpcClient;
     
-    public AdvancedCircuitBreaker(String name) {
-        this.circuitBreaker = new CircuitBreaker(name, 5, 60000, 3);
-        this.metricsCollector = new MetricsCollector(name);
-        this.timeoutMs = 5000;
+    public DegradePageService(RpcClient rpcClient) {
+        this.rpcClient = rpcClient;
+        this.circuitBreaker = new CircuitBreaker(5, 60000, 3);
     }
     
-    public <T> T execute(Supplier<T> supplier) throws Exception {
-        long startTime = System.currentTimeMillis();
-        boolean success = false;
+    public ServiceResponse getServiceData(String serviceId) {
+        if (!circuitBreaker.canExecute()) {
+            // 返回降级页面信息
+            return createDegradeResponse("Service temporarily unavailable", 
+                                       "We're experiencing technical difficulties. Please try again later.");
+        }
         
         try {
-            if (!circuitBreaker.canPass()) {
-                metricsCollector.recordRejected();
-                throw new CircuitBreakerOpenException("Circuit breaker is open for " + circuitBreaker.name);
-            }
-            
-            T result = withTimeout(supplier, timeoutMs);
-            success = true;
+            RpcRequest request = new RpcRequest("DataService", "getData", new Object[]{serviceId});
+            RpcResponse response = rpcClient.sendRequest(request);
             circuitBreaker.recordSuccess();
-            return result;
+            return new ServiceResponse(true, response.getData(), null);
         } catch (Exception e) {
-            if (!success) {
-                circuitBreaker.recordFailure();
-            }
-            throw e;
-        } finally {
-            long duration = System.currentTimeMillis() - startTime;
-            if (success) {
-                metricsCollector.recordSuccess(duration);
-            } else {
-                metricsCollector.recordFailure(duration);
-            }
+            circuitBreaker.recordFailure();
+            // 返回降级响应
+            return createDegradeResponse("Service temporarily unavailable", 
+                                       "We're experiencing technical difficulties. Please try again later.");
         }
     }
     
-    private <T> T withTimeout(Supplier<T> supplier, long timeoutMs) throws Exception {
-        CompletableFuture<T> future = CompletableFuture.supplyAsync(supplier);
-        try {
-            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            future.cancel(true);
-            throw new TimeoutException("Execution timed out after " + timeoutMs + "ms");
-        } catch (ExecutionException e) {
-            if (e.getCause() instanceof Exception) {
-                throw (Exception) e.getCause();
-            }
-            throw e;
-        }
-    }
-    
-    public CircuitBreakerState getState() {
-        return circuitBreaker.getState();
-    }
-    
-    public Metrics getMetrics() {
-        return metricsCollector.getMetrics();
+    private ServiceResponse createDegradeResponse(String title, String message) {
+        Map<String, Object> degradeData = new HashMap<>();
+        degradeData.put("title", title);
+        degradeData.put("message", message);
+        degradeData.put("timestamp", System.currentTimeMillis());
+        return new ServiceResponse(false, degradeData, "SERVICE_DEGRADED");
     }
 }
 
-class MetricsCollector {
-    private final String name;
-    private final AtomicLong successCount = new AtomicLong(0);
-    private final AtomicLong failureCount = new AtomicLong(0);
-    private final AtomicLong rejectedCount = new AtomicLong(0);
-    private final AtomicLong totalLatency = new AtomicLong(0);
-    private final AtomicLong minLatency = new AtomicLong(Long.MAX_VALUE);
-    private final AtomicLong maxLatency = new AtomicLong(0);
+class ServiceResponse {
+    private boolean success;
+    private Object data;
+    private String errorCode;
     
-    public MetricsCollector(String name) {
-        this.name = name;
+    public ServiceResponse(boolean success, Object data, String errorCode) {
+        this.success = success;
+        this.data = data;
+        this.errorCode = errorCode;
     }
     
-    public void recordSuccess(long latency) {
-        successCount.incrementAndGet();
-        totalLatency.addAndGet(latency);
-        minLatency.updateAndGet(current -> Math.min(current, latency));
-        maxLatency.updateAndGet(current -> Math.max(current, latency));
+    // getter and setter methods
+    public boolean isSuccess() { return success; }
+    public void setSuccess(boolean success) { this.success = success; }
+    public Object getData() { return data; }
+    public void setData(Object data) { this.data = data; }
+    public String getErrorCode() { return errorCode; }
+    public void setErrorCode(String errorCode) { this.errorCode = errorCode; }
+}
+```
+
+#### 缓存降级
+
+使用缓存作为降级方案，在服务不可用时返回缓存数据。
+
+```java
+public class CacheDegradationService {
+    private final CircuitBreaker circuitBreaker;
+    private final RpcClient rpcClient;
+    private final Cache<String, Object> cache;
+    private final long cacheExpireTime = 300000; // 5分钟
+    
+    public CacheDegradationService(RpcClient rpcClient) {
+        this.rpcClient = rpcClient;
+        this.circuitBreaker = new CircuitBreaker(5, 60000, 3);
+        this.cache = new ConcurrentHashMapCache<>();
     }
     
-    public void recordFailure(long latency) {
-        failureCount.incrementAndGet();
-        totalLatency.addAndGet(latency);
-        minLatency.updateAndGet(current -> Math.min(current, latency));
-        maxLatency.updateAndGet(current -> Math.max(current, latency));
-    }
-    
-    public void recordRejected() {
-        rejectedCount.incrementAndGet();
-    }
-    
-    public Metrics getMetrics() {
-        long success = successCount.get();
-        long failure = failureCount.get();
-        long rejected = rejectedCount.get();
-        long total = success + failure;
-        long totalLat = totalLatency.get();
-        long avgLatency = total > 0 ? totalLat / total : 0;
+    public Object getData(String key) throws RpcException {
+        // 首先尝试从缓存获取
+        CacheEntry entry = cache.get(key);
+        if (entry != null && System.currentTimeMillis() - entry.getTimestamp() < cacheExpireTime) {
+            return entry.getData();
+        }
         
-        return new Metrics(name, success, failure, rejected, avgLatency, 
-                          minLatency.get(), maxLatency.get());
+        // 检查熔断器状态
+        if (!circuitBreaker.canExecute()) {
+            // 熔断器打开，尝试返回缓存中的过期数据
+            if (entry != null) {
+                System.out.println("Circuit breaker open, returning stale cache data");
+                return entry.getData();
+            } else {
+                throw new RpcException("Service unavailable and no cache data");
+            }
+        }
+        
+        try {
+            RpcRequest request = new RpcRequest("DataService", "getData", new Object[]{key});
+            RpcResponse response = rpcClient.sendRequest(request);
+            circuitBreaker.recordSuccess();
+            
+            // 更新缓存
+            cache.put(key, new CacheEntry(response.getData(), System.currentTimeMillis()));
+            return response.getData();
+        } catch (Exception e) {
+            circuitBreaker.recordFailure();
+            
+            // 尝试返回缓存中的过期数据
+            if (entry != null) {
+                System.out.println("Service failed, returning stale cache data: " + e.getMessage());
+                return entry.getData();
+            } else {
+                throw new RpcException("Service failed and no cache data", e);
+            }
+        }
     }
 }
 
-class Metrics {
-    private final String name;
-    private final long successCount;
-    private final long failureCount;
-    private final long rejectedCount;
-    private final long averageLatency;
-    private final long minLatency;
-    private final long maxLatency;
+class CacheEntry {
+    private Object data;
+    private long timestamp;
     
-    public Metrics(String name, long successCount, long failureCount, long rejectedCount,
-                   long averageLatency, long minLatency, long maxLatency) {
-        this.name = name;
-        this.successCount = successCount;
-        this.failureCount = failureCount;
-        this.rejectedCount = rejectedCount;
-        this.averageLatency = averageLatency;
-        this.minLatency = minLatency;
-        this.maxLatency = maxLatency;
+    public CacheEntry(Object data, long timestamp) {
+        this.data = data;
+        this.timestamp = timestamp;
     }
     
-    // getter methods
-    public String getName() { return name; }
-    public long getSuccessCount() { return successCount; }
-    public long getFailureCount() { return failureCount; }
-    public long getRejectedCount() { return rejectedCount; }
-    public long getAverageLatency() { return averageLatency; }
-    public long getMinLatency() { return minLatency; }
-    public long getMaxLatency() { return maxLatency; }
+    public Object getData() { return data; }
+    public long getTimestamp() { return timestamp; }
+}
+
+interface Cache<K, V> {
+    V get(K key);
+    void put(K key, V value);
+}
+
+class ConcurrentHashMapCache<K, V> implements Cache<K, V> {
+    private final ConcurrentHashMap<K, V> cache = new ConcurrentHashMap<>();
     
-    public double getErrorPercentage() {
-        long total = successCount + failureCount;
-        return total > 0 ? (double) failureCount / total * 100 : 0;
+    @Override
+    public V get(K key) {
+        return cache.get(key);
     }
     
     @Override
-    public String toString() {
-        return String.format(
-            "Metrics{name='%s', success=%d, failure=%d, rejected=%d, errorRate=%.2f%%, " +
-            "avgLatency=%dms, minLatency=%dms, maxLatency=%dms}",
-            name, successCount, failureCount, rejectedCount, getErrorPercentage(),
-            averageLatency, minLatency, maxLatency);
+    public void put(K key, V value) {
+        cache.put(key, value);
     }
 }
 ```
 
-## Hystrix 实现分析
+## Hystrix 实现解析
 
 ### Hystrix 简介
 
-Hystrix 是 Netflix 开源的容错库，旨在通过添加延迟容忍和容错逻辑来控制分布式服务之间的交互。Hystrix 通过隔离服务之间的访问点、阻止级联故障并在复杂的分布式系统中实现恢复能力来提高系统的整体弹性。
+Hystrix 是 Netflix 开源的容错库，旨在通过添加延迟容忍和容错逻辑来控制分布式服务之间的交互。Hystrix 通过隔离服务之间的访问点、阻止级联故障以及提供回退选项来实现这些目标。
 
 ### Hystrix 核心概念
 
@@ -342,10 +388,10 @@ public class UserCommand extends HystrixCommand<User> {
     private final UserService userService;
     private final String userId;
     
-    protected UserCommand(UserService userService, String userId) {
-        super(Setter.withGroupKey(HystrixCommandGroupKey.Factory.asKey("UserGroup"))
+    public UserCommand(UserService userService, String userId) {
+        super(Setter.withGroupKey(HystrixCommandGroupKey.Factory.asKey("UserService"))
                 .andCommandKey(HystrixCommandKey.Factory.asKey("GetUser"))
-                .andThreadPoolKey(HystrixThreadPoolKey.Factory.asKey("UserThreadPool"))
+                .andThreadPoolKey(HystrixThreadPoolKey.Factory.asKey("UserServicePool"))
                 .andCommandPropertiesDefaults(
                         HystrixCommandProperties.Setter()
                                 .withExecutionTimeoutInMilliseconds(5000)
@@ -365,396 +411,285 @@ public class UserCommand extends HystrixCommand<User> {
     
     @Override
     protected User run() throws Exception {
-        // 实际业务逻辑
+        // 正常的业务逻辑
         return userService.getUserById(userId);
     }
     
     @Override
     protected User getFallback() {
         // 降级逻辑
-        return new User("default", "Default User");
+        System.out.println("Fallback executed for user: " + userId);
+        User fallbackUser = new User();
+        fallbackUser.setId(userId);
+        fallbackUser.setName("Fallback User");
+        fallbackUser.setEmail("fallback@example.com");
+        return fallbackUser;
+    }
+}
+
+// 使用 Hystrix 命令
+public class UserServiceClient {
+    public User getUser(String userId) {
+        UserCommand command = new UserCommand(userService, userId);
+        try {
+            return command.execute(); // 同步执行
+        } catch (Exception e) {
+            System.err.println("Failed to get user: " + e.getMessage());
+            return null;
+        }
+    }
+    
+    public Future<User> getUserAsync(String userId) {
+        UserCommand command = new UserCommand(userService, userId);
+        return command.queue(); // 异步执行
     }
 }
 ```
 
-### Hystrix 熔断器机制
+### Hystrix Dashboard
 
-Hystrix 的熔断器机制包括以下关键参数：
-
-1. **请求量阈值（RequestVolumeThreshold）**：熔断器是否打开需要统计的最小请求数
-2. **错误百分比阈值（ErrorThresholdPercentage）**：当错误百分比超过此值时，熔断器打开
-3. **休眠窗口（SleepWindowInMilliseconds）**：熔断器打开后，经过多长时间允许一次请求通过
+Hystrix 提供了仪表板来监控命令的执行情况：
 
 ```java
-// Hystrix 熔断器状态检查逻辑
-public class HystrixCircuitBreakerImpl implements HystrixCircuitBreaker {
-    private final HystrixCommandProperties properties;
-    private final String circuitBreakerName;
-    private final AtomicInteger circuitOpenOrPending = new AtomicInteger(0);
-    private volatile long circuitOpenedOrLastTestedTime = 0;
-    
-    @Override
-    public boolean isOpen() {
-        if (circuitOpenOrPending.get() == 0) {
-            // 熔断器关闭，检查是否应该打开
-            HealthCounts health = metrics.getHealthCounts();
-            
-            // 检查请求量是否达到阈值
-            if (health.getTotalRequests() < properties.circuitBreakerRequestVolumeThreshold().get()) {
-                // 请求量不足，不打开熔断器
-                return false;
-            }
-            
-            // 检查错误百分比是否超过阈值
-            if (health.getErrorPercentage() < properties.circuitBreakerErrorThresholdPercentage().get()) {
-                // 错误率未达到阈值，不打开熔断器
-                return false;
-            } else {
-                // 错误率超过阈值，尝试打开熔断器
-                if (circuitOpenOrPending.compareAndSet(0, 1)) {
-                    // 成功设置为打开状态
-                    circuitOpenedOrLastTestedTime = System.currentTimeMillis();
-                    return true;
-                } else {
-                    // 其他线程已经设置了打开状态
-                    return true;
-                }
-            }
-        } else {
-            // 熔断器已经打开
-            return true;
-        }
-    }
-    
-    @Override
-    public boolean allowRequest() {
-        if (properties.circuitBreakerForceOpen().get()) {
-            // 强制打开
-            return false;
-        }
-        if (properties.circuitBreakerForceClosed().get()) {
-            // 强制关闭，允许请求
-            return true;
-        }
-        if (circuitOpenOrPending.get() == 0) {
-            // 熔断器关闭，允许请求
-            return true;
-        } else {
-            // 熔断器打开，检查是否可以进入半开状态
-            return isAfterSleepWindow();
-        }
-    }
-    
-    private boolean isAfterSleepWindow() {
-        final long circuitOpenTime = circuitOpenedOrLastTestedTime;
-        final long currentTime = System.currentTimeMillis();
-        final long sleepWindowTime = properties.circuitBreakerSleepWindowInMilliseconds().get();
-        
-        // 检查是否超过了休眠窗口时间
-        return currentTime - circuitOpenTime >= sleepWindowTime;
+// 启用 Hystrix Dashboard
+@SpringBootApplication
+@EnableCircuitBreaker
+@EnableHystrixDashboard
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
     }
 }
 ```
 
-## Resilience4j 实现分析
+## Resilience4j 实现解析
 
 ### Resilience4j 简介
 
-Resilience4j 是一个轻量级的容错库，专为 Java 8 和函数式编程设计。与 Hystrix 相比，Resilience4j 的设计更加模块化，只使用 Vavr（以前称为 Javaslang）库，不依赖任何外部库。
+Resilience4j 是一个轻量级的容错库，专为 Java 8 和函数式编程设计。它受到 Hystrix 的启发，但去除了 Hystrix 的复杂性，提供了更灵活和易于使用的 API。
 
-### Resilience4j 核心模块
+### CircuitBreaker 使用
 
 ```java
-// Resilience4j 熔断器示例
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.decorators.Decorators;
+import io.vavr.control.Try;
+
 public class Resilience4jExample {
-    private final CircuitBreaker circuitBreaker;
     private final UserService userService;
     
     public Resilience4jExample(UserService userService) {
         this.userService = userService;
-        
-        // 创建熔断器配置
-        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
-                .failureRateThreshold(50) // 错误率阈值 50%
-                .waitDurationInOpenState(Duration.ofSeconds(10)) // 打开状态持续时间
-                .permittedNumberOfCallsInHalfOpenState(3) // 半开状态允许的请求数
-                .slidingWindowSize(10) // 滑动窗口大小
-                .recordExceptions(Exception.class) // 记录为失败的异常
-                .build();
-        
-        // 创建熔断器实例
-        this.circuitBreaker = CircuitBreaker.of("userService", config);
-        
-        // 添加事件监听器
-        circuitBreaker.getEventPublisher()
-                .onStateTransition(event -> 
-                    System.out.println("CircuitBreaker state changed: " + event.getStateTransition())
-                );
     }
     
-    public User getUser(String userId) {
-        // 创建受熔断器保护的 Supplier
-        Supplier<User> decoratedSupplier = CircuitBreaker
-                .decorateSupplier(circuitBreaker, () -> userService.getUserById(userId));
+    public User getUserWithCircuitBreaker(String userId) {
+        // 配置熔断器
+        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
+                .failureRateThreshold(50) // 失败率阈值 50%
+                .waitDurationInOpenState(Duration.ofSeconds(10)) // 熔断器打开后的等待时间
+                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.TIME_BASED)
+                .slidingWindowSize(10) // 滑动窗口大小
+                .minimumNumberOfCalls(5) // 最小调用次数
+                .build();
         
-        // 执行并返回结果
-        return Try.ofSupplier(decoratedSupplier)
-                .recover(throwable -> {
-                    // 降级逻辑
-                    System.err.println("Fallback executed due to: " + throwable.getMessage());
-                    return new User("default", "Default User");
-                })
-                .get();
+        CircuitBreaker circuitBreaker = CircuitBreaker.of("userService", config);
+        
+        // 创建带熔断器的装饰器
+        Supplier<User> decoratedSupplier = Decorators.ofSupplier(() -> userService.getUserById(userId))
+                .withCircuitBreaker(circuitBreaker)
+                .decorate();
+        
+        // 执行调用
+        Try<User> result = Try.ofSupplier(decoratedSupplier);
+        
+        if (result.isSuccess()) {
+            return result.get();
+        } else {
+            System.err.println("Failed to get user: " + result.getCause().getMessage());
+            return getFallbackUser(userId);
+        }
+    }
+    
+    private User getFallbackUser(String userId) {
+        User fallbackUser = new User();
+        fallbackUser.setId(userId);
+        fallbackUser.setName("Fallback User");
+        fallbackUser.setEmail("fallback@example.com");
+        return fallbackUser;
     }
 }
 ```
 
-### Resilience4j 高级特性
+### Retry 和 RateLimiter 组合使用
 
 ```java
-// 结合重试和熔断器
+import io.github.resilience4j.ratelimiter.RateLimiter;
+import io.github.resilience4j.ratelimiter.RateLimiterConfig;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryConfig;
+
 public class AdvancedResilience4jExample {
-    private final CircuitBreaker circuitBreaker;
-    private final Retry retry;
-    private final RateLimiter rateLimiter;
-    
-    public AdvancedResilience4jExample() {
-        // 熔断器配置
-        CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
-                .failureRateThreshold(50)
-                .waitDurationInOpenState(Duration.ofSeconds(10))
-                .slidingWindowSize(10)
-                .build();
-        
-        // 重试配置
+    public User getUserWithRetryAndRateLimit(String userId) {
+        // 配置重试
         RetryConfig retryConfig = RetryConfig.custom()
                 .maxAttempts(3)
                 .waitDuration(Duration.ofSeconds(1))
-                .retryExceptions(TimeoutException.class, ConnectException.class)
+                .retryExceptions(RpcException.class)
                 .build();
         
-        // 限流器配置
+        Retry retry = Retry.of("userService", retryConfig);
+        
+        // 配置限流器
         RateLimiterConfig rateLimiterConfig = RateLimiterConfig.custom()
                 .limitRefreshPeriod(Duration.ofSeconds(1))
                 .limitForPeriod(10) // 每秒最多10个请求
                 .timeoutDuration(Duration.ofSeconds(5))
                 .build();
         
-        this.circuitBreaker = CircuitBreaker.of("backendService", circuitBreakerConfig);
-        this.retry = Retry.of("backendService", retryConfig);
-        this.rateLimiter = RateLimiter.of("backendService", rateLimiterConfig);
-    }
-    
-    public String callExternalService(String request) {
-        // 组合多个弹性模式
-        Supplier<String> supplier = () -> {
-            // 模拟外部服务调用
-            if (Math.random() < 0.7) {
-                throw new RuntimeException("Service temporarily unavailable");
-            }
-            return "Response for: " + request;
-        };
+        RateLimiter rateLimiter = RateLimiter.of("userService", rateLimiterConfig);
         
-        // 应用限流器
-        Supplier<String> rateLimiterSupplier = RateLimiter
-                .decorateSupplier(rateLimiter, supplier);
+        // 组合使用重试和限流器
+        Supplier<User> chainedSupplier = Decorators.ofSupplier(() -> userService.getUserById(userId))
+                .withRateLimiter(rateLimiter)
+                .withRetry(retry)
+                .decorate();
         
-        // 应用重试
-        Supplier<String> retrySupplier = Retry
-                .decorateSupplier(retry, rateLimiterSupplier);
+        Try<User> result = Try.ofSupplier(chainedSupplier);
         
-        // 应用熔断器
-        Supplier<String> circuitBreakerSupplier = CircuitBreaker
-                .decorateSupplier(circuitBreaker, retrySupplier);
-        
-        // 执行并处理降级
-        return Try.ofSupplier(circuitBreakerSupplier)
-                .recover(throwable -> {
-                    System.err.println("All retries failed, falling back: " + throwable.getMessage());
-                    return "Fallback response for: " + request;
-                })
-                .get();
-    }
-}
-```
-
-## 降级机制实现
-
-### 降级策略
-
-降级机制是在系统出现故障或压力过大时，为了保证核心功能的正常运行而采取的一种措施。常见的降级策略包括：
-
-1. **返回默认值**：返回预设的默认数据
-2. **缓存数据**：返回最近一次成功获取的数据
-3. **简化逻辑**：执行简化的业务逻辑
-4. **静态页面**：返回静态的响应内容
-
-```java
-public class FallbackManager {
-    private final Cache<String, Object> fallbackCache = Caffeine.newBuilder()
-            .maximumSize(1000)
-            .expireAfterWrite(10, TimeUnit.MINUTES)
-            .build();
-    
-    public <T> T executeWithFallback(Supplier<T> primary, Supplier<T> fallback, String cacheKey) {
-        try {
-            T result = primary.get();
-            // 缓存成功结果
-            fallbackCache.put(cacheKey, result);
-            return result;
-        } catch (Exception e) {
-            System.err.println("Primary execution failed: " + e.getMessage());
-            
-            // 尝试从缓存获取
-            T cached = (T) fallbackCache.getIfPresent(cacheKey);
-            if (cached != null) {
-                System.out.println("Returning cached result");
-                return cached;
-            }
-            
-            // 执行降级逻辑
-            try {
-                T fallbackResult = fallback.get();
-                System.out.println("Fallback executed successfully");
-                return fallbackResult;
-            } catch (Exception fallbackException) {
-                System.err.println("Fallback also failed: " + fallbackException.getMessage());
-                throw new RuntimeException("Both primary and fallback failed", fallbackException);
-            }
-        }
-    }
-}
-
-// 使用示例
-public class UserServiceWithFallback {
-    private final FallbackManager fallbackManager = new FallbackManager();
-    
-    public User getUserWithFallback(String userId) {
-        return fallbackManager.executeWithFallback(
-            () -> {
-                // 主要逻辑
-                return fetchUserFromDatabase(userId);
-            },
-            () -> {
-                // 降级逻辑
-                System.out.println("Using fallback user data");
-                return new User("fallback", "Fallback User");
-            },
-            "user_" + userId
-        );
-    }
-    
-    private User fetchUserFromDatabase(String userId) {
-        // 模拟数据库查询
-        if (Math.random() < 0.3) {
-            throw new RuntimeException("Database unavailable");
-        }
-        return new User(userId, "User " + userId);
-    }
-}
-```
-
-### 自适应降级
-
-```java
-public class AdaptiveFallbackManager {
-    private final Map<String, ServiceHealth> serviceHealthMap = new ConcurrentHashMap<>();
-    
-    public <T> T executeWithAdaptiveFallback(String serviceName, Supplier<T> primary, 
-                                           Map<FallbackLevel, Supplier<T>> fallbacks) {
-        ServiceHealth health = serviceHealthMap.computeIfAbsent(serviceName, 
-            k -> new ServiceHealth());
-        
-        // 根据服务健康状况选择合适的降级级别
-        FallbackLevel fallbackLevel = determineFallbackLevel(health);
-        
-        try {
-            T result = primary.get();
-            // 更新健康状态
-            health.recordSuccess();
-            return result;
-        } catch (Exception e) {
-            System.err.println("Primary execution failed for " + serviceName + ": " + e.getMessage());
-            health.recordFailure();
-            
-            // 根据降级级别执行相应的降级逻辑
-            Supplier<T> fallback = fallbacks.get(fallbackLevel);
-            if (fallback != null) {
-                try {
-                    T fallbackResult = fallback.get();
-                    System.out.println("Executed fallback level: " + fallbackLevel);
-                    return fallbackResult;
-                } catch (Exception fallbackException) {
-                    System.err.println("Fallback also failed: " + fallbackException.getMessage());
-                    throw new RuntimeException("Both primary and fallback failed", fallbackException);
-                }
-            } else {
-                throw new RuntimeException("No fallback available for level: " + fallbackLevel);
-            }
-        }
-    }
-    
-    private FallbackLevel determineFallbackLevel(ServiceHealth health) {
-        double errorRate = health.getErrorRate();
-        if (errorRate < 0.1) {
-            return FallbackLevel.NONE; // 不需要降级
-        } else if (errorRate < 0.3) {
-            return FallbackLevel.BASIC; // 基础降级
-        } else if (errorRate < 0.6) {
-            return FallbackLevel.PARTIAL; // 部分降级
+        if (result.isSuccess()) {
+            return result.get();
         } else {
-            return FallbackLevel.FULL; // 完全降级
+            System.err.println("Failed to get user after retries and rate limiting: " + 
+                             result.getCause().getMessage());
+            return getFallbackUser(userId);
         }
     }
 }
+```
 
-enum FallbackLevel {
-    NONE,    // 不降级
-    BASIC,   // 基础降级
-    PARTIAL, // 部分降级
-    FULL     // 完全降级
+## 熔断与降级的最佳实践
+
+### 配置管理
+
+合理的配置管理对于熔断与降级机制至关重要：
+
+```java
+public class ResilienceConfigManager {
+    private volatile ResilienceConfig config = new ResilienceConfig();
+    
+    public static class ResilienceConfig {
+        // 熔断器配置
+        private int failureThreshold = 50; // 失败率阈值百分比
+        private long waitDurationInOpenState = 60000; // 熔断器打开后的等待时间（毫秒）
+        private int slidingWindowSize = 100; // 滑动窗口大小
+        private int minimumNumberOfCalls = 10; // 最小调用次数
+        
+        // 重试配置
+        private int maxRetryAttempts = 3; // 最大重试次数
+        private long retryWaitDuration = 1000; // 重试等待时间（毫秒）
+        
+        // 限流配置
+        private int rateLimitForPeriod = 100; // 每个周期的请求限制
+        private long rateLimitRefreshPeriod = 1000; // 刷新周期（毫秒）
+        
+        // getter and setter methods
+        public int getFailureThreshold() { return failureThreshold; }
+        public void setFailureThreshold(int failureThreshold) { this.failureThreshold = failureThreshold; }
+        
+        public long getWaitDurationInOpenState() { return waitDurationInOpenState; }
+        public void setWaitDurationInOpenState(long waitDurationInOpenState) { 
+            this.waitDurationInOpenState = waitDurationInOpenState; 
+        }
+        
+        public int getSlidingWindowSize() { return slidingWindowSize; }
+        public void setSlidingWindowSize(int slidingWindowSize) { this.slidingWindowSize = slidingWindowSize; }
+        
+        public int getMinimumNumberOfCalls() { return minimumNumberOfCalls; }
+        public void setMinimumNumberOfCalls(int minimumNumberOfCalls) { 
+            this.minimumNumberOfCalls = minimumNumberOfCalls; 
+        }
+        
+        public int getMaxRetryAttempts() { return maxRetryAttempts; }
+        public void setMaxRetryAttempts(int maxRetryAttempts) { this.maxRetryAttempts = maxRetryAttempts; }
+        
+        public long getRetryWaitDuration() { return retryWaitDuration; }
+        public void setRetryWaitDuration(long retryWaitDuration) { this.retryWaitDuration = retryWaitDuration; }
+        
+        public int getRateLimitForPeriod() { return rateLimitForPeriod; }
+        public void setRateLimitForPeriod(int rateLimitForPeriod) { this.rateLimitForPeriod = rateLimitForPeriod; }
+        
+        public long getRateLimitRefreshPeriod() { return rateLimitRefreshPeriod; }
+        public void setRateLimitRefreshPeriod(long rateLimitRefreshPeriod) { 
+            this.rateLimitRefreshPeriod = rateLimitRefreshPeriod; 
+        }
+    }
+    
+    public ResilienceConfig getConfig() {
+        return config;
+    }
+    
+    public void updateConfig(ResilienceConfig newConfig) {
+        this.config = newConfig;
+    }
 }
+```
 
-class ServiceHealth {
-    private final AtomicLong successCount = new AtomicLong(0);
-    private final AtomicLong failureCount = new AtomicLong(0);
-    private final long windowSize = 100; // 滑动窗口大小
+### 监控与告警
+
+实施有效的监控来跟踪熔断器和降级情况：
+
+```java
+public class ResilienceMetricsCollector {
+    private final MeterRegistry meterRegistry;
     
-    public void recordSuccess() {
-        successCount.incrementAndGet();
-        // 限制计数器大小
-        if (successCount.get() + failureCount.get() > windowSize) {
-            successCount.updateAndGet(current -> Math.max(0, current - 1));
-            failureCount.updateAndGet(current -> Math.max(0, current - 1));
-        }
+    public ResilienceMetricsCollector(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
     }
     
-    public void recordFailure() {
-        failureCount.incrementAndGet();
-        // 限制计数器大小
-        if (successCount.get() + failureCount.get() > windowSize) {
-            successCount.updateAndGet(current -> Math.max(0, current - 1));
-            failureCount.updateAndGet(current -> Math.max(0, current - 1));
-        }
+    public void recordCircuitBreakerState(String serviceName, String state) {
+        Gauge.builder("circuit_breaker.state")
+            .tag("service", serviceName)
+            .tag("state", state)
+            .register(meterRegistry, 1);
     }
     
-    public double getErrorRate() {
-        long total = successCount.get() + failureCount.get();
-        return total > 0 ? (double) failureCount.get() / total : 0;
+    public void recordFallbackExecution(String serviceName, String methodName) {
+        Counter.builder("fallback.executions")
+            .tag("service", serviceName)
+            .tag("method", methodName)
+            .register(meterRegistry)
+            .increment();
+    }
+    
+    public void recordRetryAttempt(String serviceName, String methodName, int attempt) {
+        Counter.builder("retry.attempts")
+            .tag("service", serviceName)
+            .tag("method", methodName)
+            .tag("attempt", String.valueOf(attempt))
+            .register(meterRegistry)
+            .increment();
+    }
+    
+    public void recordRateLimitExceeded(String serviceName) {
+        Counter.builder("rate_limit.exceeded")
+            .tag("service", serviceName)
+            .register(meterRegistry)
+            .increment();
     }
 }
 ```
 
 ## 总结
 
-熔断与降级是构建高可用分布式系统的重要手段。通过合理设计和实现熔断器模式，我们可以有效防止故障的级联传播，提高系统的稳定性和用户体验。
+熔断与降级机制是构建高可用分布式系统的重要手段。通过合理配置熔断器、实现多种降级策略，并结合 Hystrix 或 Resilience4j 等成熟框架，我们可以有效防止级联故障，提高系统的稳定性和用户体验。
 
 关键要点：
 
-1. **熔断器三状态**：关闭、打开、半开状态的合理转换
-2. **核心参数配置**：失败阈值、超时时间、请求量阈值等
-3. **主流框架对比**：Hystrix 与 Resilience4j 的特点和适用场景
-4. **降级策略**：默认值、缓存数据、简化逻辑等多种降级方式
-5. **组合使用**：熔断器、重试、限流等模式的协同工作
+1. **熔断器状态管理**：正确实现 CLOSED、OPEN、HALF_OPEN 三种状态的转换
+2. **降级策略选择**：根据业务场景选择合适的降级方式（静默降级、降级页面、缓存降级等）
+3. **框架选择**：根据项目需求选择 Hystrix 或 Resilience4j
+4. **配置管理**：支持动态调整熔断、重试、限流等参数
+5. **监控告警**：跟踪熔断器状态和降级执行情况
 
-在实际应用中，需要根据具体的业务场景和系统要求来选择合适的熔断降级方案，并进行合理的参数调优。在下一章中，我们将探讨服务限流机制，进一步完善 RPC 系统的容错能力。
+在实际应用中，需要根据具体业务场景和系统要求来调整这些参数，以达到最佳的平衡点。在下一章中，我们将探讨服务限流机制，进一步完善 RPC 系统的容错能力。

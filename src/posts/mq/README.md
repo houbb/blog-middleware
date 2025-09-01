@@ -20,8 +20,6 @@
 
 1. [消息队列的核心要素概述：构建可靠分布式系统的三大支柱](3-1-message-queue-core-elements-overview.md)
 2. [生产者、Broker、消费者深度解析：消息队列核心组件的内部机制与最佳实践](3-2-producers-brokers-consumers-in-depth.md)
-3. [消息持久化深度解析：确保消息不丢失的关键技术实现与优化策略](3-3-message-persistence-in-depth.md)
-4. [消费确认与重试机制深度解析：保障消息处理可靠性的核心技术实现](3-4-acknowledgment-retry-mechanism-in-depth.md)
 
 ### 第4章 消息可靠性与一致性
 
