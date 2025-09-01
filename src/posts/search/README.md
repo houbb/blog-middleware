@@ -11,6 +11,7 @@
 - [为什么需要搜索与数据分析中间件：从传统数据库到现代搜索引擎的演进之路](1-1-why-search-and-analytics-middleware.md)
 - [传统数据库与搜索引擎的对决：技术架构与适用场景深度剖析](1-1-1-traditional-database-vs-search-engine.md)
 - [OLAP、日志分析与实时分析：现代企业数据处理的三大支柱](1-1-2-olap-log-analytics-realtime-demand.md)
+- [企业信息检索与数据驱动决策：构建智能化商业智能体系](1-1-3-enterprise-information-retrieval-data-driven-decision.md)
 
 #### 第2章 核心概念
 

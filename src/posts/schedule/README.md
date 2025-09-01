@@ -8,7 +8,7 @@
 
 1. [为什么需要分布式任务调度？](1-1-1-why-distributed-scheduling.md)
    * [1.1 单机 Cron 的局限](1-1-1-1-limitations-of-single-machine-cron.md)
-   * [1.2 分布式系统中的任务需求](1.2-distributed-system-task-requirements.md)
+   * [1.2 分布式系统中的任务需求](1-1-1-2-distributed-system-task-requirements.md)
    * [1.3 定时任务 vs 实时任务](1-1-1-3-timed-tasks-vs-real-time-tasks.md)
    * [1.4 分布式调度的挑战与机遇](1-1-1-4-challenges-and-opportunities-of-distributed-scheduling.md)
 
