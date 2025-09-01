@@ -23,26 +23,29 @@
 9. [Eureka](3-2-eureka.md)
 10. [Consul](3-3-consul.md)
 11. [Nacos](3-4-nacos.md)
-12. [Apollo](3-5-apollo.md)
+12. [Apollo配置管理模型（Namespace、Cluster）](3-5-1-apollo-namespace-cluster-model.md)
+13. [Apollo配置发布流程与灰度发布](3-5-2-apollo-config-publishing-and-gray-release.md)
+14. [Apollo客户端缓存与回滚机制](3-5-3-apollo-client-cache-and-rollback.md)
+15. [Apollo企业级最佳实践](3-5-4-apollo-enterprise-best-practices.md)
 
 ### 第四部分 高级篇：进阶与架构思维
 
-13. [服务发现模式](4-1-service-discovery-patterns.md)
-14. [配置中心高级特性](4-2-config-center-advanced-features.md)
-15. [一致性与高可用](4-3-consistency-and-high-availability.md)
-16. [性能与扩展性优化](4-4-performance-and-scalability-optimization.md)
+16. [服务发现模式](4-1-service-discovery-patterns.md)
+17. [配置中心高级特性](4-2-config-center-advanced-features.md)
+18. [一致性与高可用](4-3-consistency-and-high-availability.md)
+19. [性能与扩展性优化](4-4-performance-and-scalability-optimization.md)
 
 ### 第五部分 实践篇：生产环境的落地
 
-17. [服务注册与配置中心在电商系统中的应用](5-1-service-registry-and-config-center-in-e-commerce.md)
-18. [企业级最佳实践](5-2-enterprise-best-practices.md)
-19. [监控与运维](5-3-monitoring-and-operations.md)
+20. [服务注册与配置中心在电商系统中的应用](5-1-service-registry-and-config-center-in-e-commerce.md)
+21. [企业级最佳实践](5-2-enterprise-best-practices.md)
+22. [监控与运维](5-3-monitoring-and-operations.md)
 
 ### 第六部分 展望篇：未来趋势
 
-20. [云原生与 Service Mesh](6-1-cloud-native-and-service-mesh.md)
-21. [配置即代码（Configuration as Code）](6-2-configuration-as-code.md)
-22. [总结与学习路径](6-3-summary-and-learning-path.md)
+23. [云原生与 Service Mesh](6-1-cloud-native-and-service-mesh.md)
+24. [配置即代码（Configuration as Code）](6-2-configuration-as-code.md)
+25. [总结与学习路径](6-3-summary-and-learning-path.md)
 
 ## 使用说明
 
