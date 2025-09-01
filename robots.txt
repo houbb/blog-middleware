@@ -1,4 +1,4 @@
 User-agent:*
 Disallow:
 
-Sitemap: https://houbb.github.io/lmxxf-thinking/sitemap.xml
+Sitemap: https://houbb.github.io/blog-middleware/sitemap.xml
